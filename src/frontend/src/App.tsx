@@ -62,17 +62,6 @@ function AppInner() {
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
       <main className="flex-1">{renderPage()}</main>
-      <footer className="bg-foreground text-primary-foreground py-4 text-center text-sm">
-        © {new Date().getFullYear()}. Built with ❤️ using{" "}
-        <a
-          href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline hover:opacity-80"
-        >
-          caffeine.ai
-        </a>
-      </footer>
       {showProfileSetup && <ProfileSetupModal />}
       <Toaster richColors position="top-center" />
     </div>

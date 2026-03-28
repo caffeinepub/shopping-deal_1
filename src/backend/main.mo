@@ -10,10 +10,12 @@ import Runtime "mo:core/Runtime";
 import Int "mo:core/Int";
 import Nat "mo:core/Nat";
 import Map "mo:core/Map";
+
 import AccessControl "authorization/access-control";
 import MixinAuthorization "authorization/MixinAuthorization";
 import Store "blob-storage/Storage";
 import MixinStorage "blob-storage/Mixin";
+
 
 actor {
   // Initialize the access control system
@@ -21,6 +23,32 @@ actor {
 
   include MixinAuthorization(accessControlState);
   include MixinStorage();
+
+  // Founder tracking - first user to sign in becomes founder permanently
+  var founderPrincipal : ?Principal = null;
+
+  // Claim founder role - only works if no founder exists yet
+  public shared ({ caller }) func claimFounder() : async Bool {
+    if (caller.isAnonymous()) { return false };
+    switch (founderPrincipal) {
+      case (null) {
+        founderPrincipal := ?caller;
+        true
+      };
+      case (?founder) {
+        caller == founder
+      };
+    };
+  };
+
+  // Check if caller is the founder
+  public query ({ caller }) func isCallerFounder() : async Bool {
+    if (caller.isAnonymous()) { return false };
+    switch (founderPrincipal) {
+      case (null) { false };
+      case (?founder) { caller == founder };
+    };
+  };
 
   // User Profile Type
   public type UserProfile = {
@@ -33,22 +61,16 @@ actor {
   // User Profile Functions
   public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
     if (caller.isAnonymous()) { return null };
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      return null;
-    };
     userProfiles.get(caller);
   };
 
   public query ({ caller }) func getUserProfile(user : Principal) : async ?UserProfile {
-    if (caller != user and not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Can only view your own profile");
-    };
     userProfiles.get(user);
   };
 
   public shared ({ caller }) func saveCallerUserProfile(profile : UserProfile) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only users can save profiles");
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthorized: Must be signed in");
     };
     userProfiles.add(caller, profile);
   };
@@ -208,6 +230,14 @@ actor {
   let orders = Map.empty<Text, Order>();
   let appSettings = Map.empty<Text, AppSettings>();
 
+  // Helper to check if caller is founder
+  func callerIsFounder(caller : Principal) : Bool {
+    switch (founderPrincipal) {
+      case (null) { false };
+      case (?founder) { caller == founder };
+    };
+  };
+
   // Helper Functions
   func getProductById(productId : Text) : Product {
     switch (products.get(productId)) {
@@ -216,21 +246,10 @@ actor {
     };
   };
 
-  // Initialize app settings (founder only)
-  public shared ({ caller }) func initializeAppSettings(appName : Text) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only founders can initialize app settings");
-    };
-    if (appSettings.containsKey("settings")) {
-      Runtime.trap("App settings already initialized");
-    };
-    appSettings.add("settings", { appName; logo = null });
-  };
-
   // Update app name (founder only)
   public shared ({ caller }) func updateAppName(appName : Text) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only founders can update app name");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can update app name");
     };
     switch (appSettings.get("settings")) {
       case (null) {
@@ -240,6 +259,17 @@ actor {
         appSettings.add("settings", { settings with appName });
       };
     };
+  };
+
+  // Initialize app settings (founder only)
+  public shared ({ caller }) func initializeAppSettings(appName : Text) : async () {
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can initialize app settings");
+    };
+    if (appSettings.containsKey("settings")) {
+      Runtime.trap("App settings already initialized");
+    };
+    appSettings.add("settings", { appName; logo = null });
   };
 
   // Get app settings - returns default if not initialized
@@ -252,8 +282,8 @@ actor {
 
   // Create product (founder only)
   public shared ({ caller }) func createProduct(product : Product) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only founders can create products");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can create products");
     };
     if (products.containsKey(product.id)) {
       Runtime.trap("Product already exists");
@@ -263,8 +293,8 @@ actor {
 
   // Update product (founder only)
   public shared ({ caller }) func updateProduct(product : Product) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only founders can update products");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can update products");
     };
     if (not products.containsKey(product.id)) {
       Runtime.trap("Product not found");
@@ -274,8 +304,8 @@ actor {
 
   // Delete product (founder only)
   public shared ({ caller }) func deleteProduct(productId : Text) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only founders can delete products");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can delete products");
     };
     if (not products.containsKey(productId)) {
       Runtime.trap("Product not found");
@@ -295,16 +325,19 @@ actor {
 
   // Create founder offer (founder only)
   public shared ({ caller }) func createFounderOffer(offer : FounderOffer) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only founders can create founder offers");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can create founder offers");
     };
     founderOffers.add(offer.id, { offer with createdAt = Time.now() });
   };
 
   // Create customer offer (logged in users only)
   public shared ({ caller }) func createCustomerOffer(offer : CustomerOffer) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only logged in customers can create customer offers");
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthorized: Must be signed in");
+    };
+    if (offer.customerId != caller) {
+      Runtime.trap("Unauthorized: Cannot create offer for another user");
     };
     customerOffers.add(offer.id, { offer with createdAt = Time.now() });
   };
@@ -322,8 +355,8 @@ actor {
 
   // Add item to cart (logged in users only)
   public shared ({ caller }) func addToCart(productId : Text, quantity : Nat) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only logged in customers can add items to cart");
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthorized: Must be signed in");
     };
     let cart = switch (carts.get(caller)) {
       case (null) { List.empty<CartItem>() };
@@ -336,8 +369,8 @@ actor {
 
   // Remove item from cart
   public shared ({ caller }) func removeFromCart(productId : Text) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only logged in customers can remove items from cart");
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthorized: Must be signed in");
     };
     let cart = switch (carts.get(caller)) {
       case (null) { List.empty<CartItem>() };
@@ -349,9 +382,6 @@ actor {
 
   // Get cart
   public query ({ caller }) func getCart(userId : Principal) : async [CartItem] {
-    if (caller != userId and not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Can only view your own cart");
-    };
     switch (carts.get(userId)) {
       case (null) { [] };
       case (?cart) { cart.toArray().sort() };
@@ -360,8 +390,8 @@ actor {
 
   // Place order
   public shared ({ caller }) func placeOrder(order : Order) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only logged in customers can place orders");
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthorized: Must be signed in");
     };
     if (order.customerId != caller) {
       Runtime.trap("Unauthorized: Cannot place order for another user");
@@ -369,18 +399,18 @@ actor {
     orders.add(order.id, { order with createdAt = Time.now() });
   };
 
-  // Get all orders (admin only)
+  // Get all orders (founder only)
   public query ({ caller }) func getAllOrders() : async [Order] {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only admins can view all orders");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can view all orders");
     };
     orders.values().toArray();
   };
 
-  // Update order status (admin only)
+  // Update order status (founder only)
   public shared ({ caller }) func updateOrderStatus(orderId : Text, status : OrderStatus) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only admins can update order status");
+    if (not callerIsFounder(caller)) {
+      Runtime.trap("Unauthorized: Only founder can update order status");
     };
     switch (orders.get(orderId)) {
       case (null) { Runtime.trap("Order not found") };
@@ -389,4 +419,5 @@ actor {
       };
     };
   };
+
 };

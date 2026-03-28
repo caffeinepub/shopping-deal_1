@@ -108,7 +108,7 @@ export function useIsAdmin() {
     queryFn: async () => {
       if (!actor) return false;
       try {
-        return await actor.isCallerAdmin();
+        return await actor.isCallerFounder();
       } catch {
         return false;
       }

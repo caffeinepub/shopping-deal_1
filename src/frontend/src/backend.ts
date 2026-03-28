@@ -206,6 +206,8 @@ export interface backendInterface {
     getUserProfile(user: Principal): Promise<UserProfile | null>;
     initializeAppSettings(appName: string): Promise<void>;
     isCallerAdmin(): Promise<boolean>;
+    isCallerFounder(): Promise<boolean>;
+    claimFounder(): Promise<boolean>;
     placeOrder(order: Order): Promise<void>;
     removeFromCart(productId: string): Promise<void>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
@@ -554,6 +556,14 @@ export class Backend implements backendInterface {
             const result = await this.actor.isCallerAdmin();
             return result;
         }
+    }
+    async isCallerFounder(): Promise<boolean> {
+        const result = await this.actor.isCallerFounder();
+        return result;
+    }
+    async claimFounder(): Promise<boolean> {
+        const result = await this.actor.claimFounder();
+        return result;
     }
     async placeOrder(arg0: Order): Promise<void> {
         if (this.processError) {

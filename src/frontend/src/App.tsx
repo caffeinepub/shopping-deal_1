@@ -1,8 +1,9 @@
 import { Toaster } from "@/components/ui/sonner";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Navbar from "./components/Navbar";
 import ProfileSetupModal from "./components/ProfileSetupModal";
 import { AppProvider, useAppContext } from "./context/AppContext";
+import { useActor } from "./hooks/useActor";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { useCallerProfile, useIsAdmin } from "./hooks/useQueries";
 import AddProductPage from "./pages/AddProductPage";
@@ -20,12 +21,31 @@ import SignInPage from "./pages/SignInPage";
 function AppInner() {
   const { page, setIsAdmin } = useAppContext();
   const { identity } = useInternetIdentity();
+  const { actor } = useActor();
   const { data: isAdmin } = useIsAdmin();
   const { data: profile } = useCallerProfile();
+  const claimedRef = useRef(false);
 
   useEffect(() => {
     if (isAdmin !== undefined) setIsAdmin(isAdmin);
   }, [isAdmin, setIsAdmin]);
+
+  // When user signs in, call claimFounder() -- first caller becomes founder permanently
+  useEffect(() => {
+    if (identity && actor && !claimedRef.current) {
+      claimedRef.current = true;
+      actor
+        .claimFounder()
+        .then((isFounder) => {
+          if (isFounder) setIsAdmin(true);
+        })
+        .catch(() => {});
+    }
+    if (!identity) {
+      claimedRef.current = false;
+      setIsAdmin(false);
+    }
+  }, [identity, actor, setIsAdmin]);
 
   const showProfileSetup = !!identity && profile === null;
 
